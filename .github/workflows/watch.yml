@@ -177,6 +177,7 @@ jobs:
             test-notify)
               python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
               ;;
+            loop)
               python scripts/watch.py --loop \
                 --max-seconds "${{ github.event.inputs.max_seconds || '19800' }}" \
                 --interval "${{ github.event.inputs.interval || '60' }}"
