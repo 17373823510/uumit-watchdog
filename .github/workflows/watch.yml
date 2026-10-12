@@ -1,0 +1,173 @@
+name: UUMit Watchdog
+
+on:
+  schedule:
+    # 每 15 分钟触发一次；job 内部会自检「是否已有实例在跑」，
+    # 有则本次立即退出，由在跑的那个实例长驻轮询，避免并发。
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "once=检测一次 / loop=长驻轮询 / probe=探测可用会话入口 / check=检查登录态 / test-notify=测试通知通道"
+        required: false
+        default: "once"
+      max_seconds:
+        description: "loop 模式最长运行时长（秒），GitHub job 上限 6 小时"
+        required: false
+        default: "19800"
+      interval:
+        description: "loop 模式轮询间隔（秒）"
+        required: false
+        default: "60"
+
+permissions:
+  contents: write      # 把待办写回仓库，方便 Agent 用 raw 链接拉取
+  actions: read
+
+concurrency:
+  group: uumit-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350          # < 6h 硬上限，留缓冲
+    env:
+      # ---- UUMit 凭据（必填，务必配在 Secrets 里）----
+      UUMIT_API_KEY:       ${{ secrets.UUMIT_API_KEY }}
+      UUMIT_USER_ID:       ${{ secrets.UUMIT_USER_ID }}
+      UUMIT_BASE_URL:      ${{ vars.UUMIT_BASE_URL || 'https://api.uumit.com' }}
+      # ---- WorkBuddy 网页端凭据（二选一，推荐 storage_state）----
+      WB_STORAGE_STATE_B64: ${{ secrets.WB_STORAGE_STATE_B64 }}
+      WB_COOKIE:            ${{ secrets.WB_COOKIE }}
+      WB_CHAT_URL:          ${{ vars.WB_CHAT_URL }}
+      # ---- 兜底通知（可选，配几个用几个）----
+      TG_BOT_TOKEN:  ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID:    ${{ secrets.TG_CHAT_ID }}
+      BARK_KEY:      ${{ secrets.BARK_KEY }}
+      SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+      NTFY_TOPIC:    ${{ secrets.NTFY_TOPIC }}
+      # ---- 行为参数 ----
+      POLL_INTERVAL: ${{ vars.POLL_INTERVAL || '60' }}
+      WAKE_COOLDOWN: ${{ vars.WAKE_COOLDOWN || '900' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 防止并发实例（已有实例在跑则本次退出）
+        if: github.event_name == 'schedule'
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          me   = os.environ["GITHUB_RUN_ID"]
+          tok  = os.environ["GITHUB_TOKEN"]
+          url  = f"https://api.github.com/repos/{repo}/actions/runs?status=in_progress&per_page=50"
+          req  = urllib.request.Request(url, headers={
+              "Authorization": f"Bearer {tok}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "watchdog"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              runs = json.load(r).get("workflow_runs", [])
+          others = [x for x in runs
+                    if str(x.get("id")) != me and x.get("name") == "UUMit Watchdog"]
+          print(f"in_progress 实例数（不含自己）: {len(others)}")
+          if others:
+              print("已有实例在跑，本次退出")
+              raise SystemExit(0)
+          PY
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 恢复状态缓存
+        uses: actions/cache/restore@v4
+        with:
+          path: state/
+          key: uumit-state-${{ github.run_id }}
+          restore-keys: |
+            uumit-state-
+
+      - name: 安装 Playwright
+        run: |
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium || python -m playwright install chromium
+
+      - name: 检查必需配置
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          miss = [k for k in ("UUMIT_API_KEY", "UUMIT_USER_ID") if not os.environ.get(k, "").strip()]
+          if miss:
+              print("::error::缺少 Secrets: " + ", ".join(miss))
+              sys.exit(1)
+          has_wb = bool(os.environ.get("WB_STORAGE_STATE_B64", "").strip()
+                        or os.environ.get("WB_COOKIE", "").strip())
+          print("WorkBuddy 凭据: " + ("已配置" if has_wb else "未配置（将无法唤醒，仅检测）"))
+          PY
+
+      - name: 运行看门狗
+        id: run
+        run: |
+          MODE="${{ github.event.inputs.mode || 'once' }}"
+          case "$MODE" in
+            probe)
+              python scripts/wakeup.py --probe || echo "probe 未找到可用入口"
+              ;;
+            check)
+              python scripts/wakeup.py --check || echo "登录态检查未通过"
+              ;;
+            test-notify)
+              python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
+              ;;
+            loop)
+              python scripts/watch.py --loop \
+                --max-seconds "${{ github.event.inputs.max_seconds || '19800' }}" \
+                --interval "${{ github.event.inputs.interval || '60' }}"
+              ;;
+            *)
+              # schedule 触发时走长驻循环（job 上限内尽量跑满），手动 once 走单次
+              if [ "${{ github.event_name }}" = "schedule" ]; then
+                python scripts/watch.py --loop --max-seconds 19800 --interval "${POLL_INTERVAL}"
+              else
+                python scripts/watch.py --once
+              fi
+              ;;
+          esac
+
+      - name: 上传截图产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wakeup-shots-${{ github.run_id }}
+          path: shots/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 保存状态缓存
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state/
+          key: uumit-state-${{ github.run_id }}
+
+      - name: 把待办写回仓库
+        if: always()
+        run: |
+          git config user.name  "uumit-watchdog[bot]"
+          git config user.email "watchdog@users.noreply.github.com"
+          git add -f state/seen.json state/pending.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无状态变更，跳过提交"
+          else
+            git commit -m "chore(state): update UUMit watchdog state [skip ci]"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}" || echo "推送失败（可忽略，下轮会重试）"
+          fi
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}

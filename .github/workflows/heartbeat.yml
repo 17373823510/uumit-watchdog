@@ -1,0 +1,61 @@
+name: Heartbeat
+
+# 两个作用：
+# 1) 保持仓库活跃 —— GitHub 会禁用「长时间无活动仓库」的定时任务，
+#    每天一次空提交可以避免 watch.yml 的 schedule 被停掉。
+# 2) 每天自检一次 UUMit 凭据是否还有效，失效立刻发通知提醒更新 Secrets。
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    env:
+      UUMIT_API_KEY: ${{ secrets.UUMIT_API_KEY }}
+      UUMIT_USER_ID: ${{ secrets.UUMIT_USER_ID }}
+      TG_BOT_TOKEN:   ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID:     ${{ secrets.TG_CHAT_ID }}
+      BARK_KEY:       ${{ secrets.BARK_KEY }}
+      SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+      NTFY_TOPIC:     ${{ secrets.NTFY_TOPIC }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 凭据健康自检
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, "scripts")
+          from uumit_client import UumitClient, UumitError
+          import notify
+          try:
+              c = UumitClient()
+              apps = c.my_applications(page_size=5)
+              print("凭据有效，申请样例数:", len(apps))
+          except UumitError as e:
+              print("::error::凭据自检失败")
+              notify.send("UUMit 看门狗凭据失效",
+                          "GitHub Actions 拉不到 UUMit 数据，请去仓库 Secrets 更新 "
+                          "UUMIT_API_KEY / UUMIT_USER_ID。\n\n详情：%s" % e)
+              raise SystemExit(1)
+          PY
+
+      - name: 空提交保活
+        run: |
+          git config user.name  "uumit-watchdog[bot]"
+          git config user.email "watchdog@users.noreply.github.com"
+          git commit --allow-empty -m "chore: heartbeat [skip ci]"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          git push origin "HEAD:${GITHUB_REF_NAME}" || echo "推送失败，可忽略"
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
