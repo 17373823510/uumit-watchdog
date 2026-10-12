@@ -64,12 +64,11 @@ git push -u origin main
 | `UUMIT_USER_ID` | ✅ | `platform_user_id`（UUID） |
 | `WB_STORAGE_STATE_B64` | 推荐 | Playwright storage_state 的 base64，比裸 cookie 耐用 |
 | `WB_COOKIE` | 二选一 | Cookie 字符串（F12 复制的整行） |
-| `TG_BOT_TOKEN` / `TG_CHAT_ID` | 可选 | Telegram 兜底通知 |
-| `BARK_KEY` | 可选 | iOS Bark 推送 |
-| `SERVERCHAN_KEY` | 可选 | 微信 Server酱 |
-| `NTFY_TOPIC` | 可选 | ntfy.sh |
+| `PUSHPLUS_TOKEN` | ✅ | PushPlus 令牌，兜底通知走微信 / QQ / 短信 |
+| `TG_BOT_TOKEN` / `TG_CHAT_ID` | 可选 | Telegram 备用 |
+| `BARK_KEY` / `SERVERCHAN_KEY` / `NTFY_TOPIC` | 可选 | 其它备用通道 |
 
-对应的 **Variables**（非敏感，可直接写在仓库变量里）：`POLL_INTERVAL`、`WAKE_COOLDOWN`、`WB_CHAT_URL`、`UUMIT_BASE_URL`。
+对应的 **Variables**（非敏感）：`PUSHPLUS_CHANNELS`（默认 `wechat,qq,sms`）、`POLL_INTERVAL`、`WAKE_COOLDOWN`、`WB_CHAT_URL`、`UUMIT_BASE_URL`。
 
 #### 怎么拿到 UUMit 凭据
 

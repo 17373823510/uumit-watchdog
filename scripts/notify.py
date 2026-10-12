@@ -6,6 +6,7 @@
 浏览器唤醒失败时的兜底：把告警推到手机上，由人工发一句话唤醒 Agent。
 
 已支持（配置了哪个就用哪个，都没配就静默跳过）：
+    PushPlus   PUSHPLUS_TOKEN    （主用；PUSHPLUS_CHANNELS 指定渠道，默认 wechat,qq,sms）
     TELEGRAM   TG_BOT_TOKEN + TG_CHAT_ID
     Bark(iOS)  BARK_KEY          （可选 BARK_SERVER，默认 https://api.day.app）
     Server酱   SERVERCHAN_KEY    （SendKey，sctapi.ftqq.com）
@@ -13,6 +14,14 @@
 
 零第三方依赖。全部走环境变量。
 """
+
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PUSHPLUS_API = "http://www.pushplus.plus/send"
 
 import json
 import os
@@ -40,6 +49,24 @@ def send(title, content, channels=None):
     """返回成功投递的通道名列表。"""
     ok = []
     want = set((channels or "").split(",")) if channels else None
+
+    # ---- PushPlus（微信 / QQ / 短信 / 邮件 / 企业微信，一个 token 多渠道）----
+    pplus = os.environ.get("PUSHPLUS_TOKEN", "").strip()
+    if pplus and (want is None or "pushplus" in want):
+        ch_raw = os.environ.get("PUSHPLUS_CHANNELS", "wechat").strip()
+        chans = [c.strip() for c in ch_raw.split(",") if c.strip()]
+        for ch in chans:
+            # 短信有长度成本，砍短；微信/QQ 保留完整内容
+            body = content if ch != "sms" else content[:300]
+            payload = {
+                "token": pplus,
+                "title": title[:100],
+                "content": body,
+                "template": "txt",
+                "channel": ch,
+            }
+            if _post(PUSHPLUS_API, payload, {"Content-Type": "application/json"}):
+                ok.append("pushplus:" + ch)
 
     token = os.environ.get("TG_BOT_TOKEN", "").strip()
     chat = os.environ.get("TG_CHAT_ID", "").strip()

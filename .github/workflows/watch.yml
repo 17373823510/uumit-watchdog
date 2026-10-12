@@ -41,7 +41,10 @@ jobs:
       WB_STORAGE_STATE_B64: ${{ secrets.WB_STORAGE_STATE_B64 }}
       WB_COOKIE:            ${{ secrets.WB_COOKIE }}
       WB_CHAT_URL:          ${{ vars.WB_CHAT_URL }}
-      # ---- 兜底通知（可选，配几个用几个）----
+      # ---- 兜底通知：PushPlus（微信 / QQ / 短信）----
+      PUSHPLUS_TOKEN:    ${{ secrets.PUSHPLUS_TOKEN }}
+      PUSHPLUS_CHANNELS: ${{ vars.PUSHPLUS_CHANNELS || 'wechat,qq,sms' }}
+      # ---- 其它兜底通知（可选）----
       TG_BOT_TOKEN:  ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID:    ${{ secrets.TG_CHAT_ID }}
       BARK_KEY:      ${{ secrets.BARK_KEY }}
