@@ -5,6 +5,10 @@ on:
     # 每 15 分钟触发一次；job 内部会自检「是否已有实例在跑」，
     # 有则本次立即退出，由在跑的那个实例长驻轮询，避免并发。
     - cron: "*/15 * * * *"
+  # 供外部检测端（云函数 / 内网机器 / 沙箱）推送任务：
+  #   POST /repos/{owner}/{repo}/dispatches  {"event_type":"uumit-new-task","client_payload":{"message":"AUTO ..."}}
+  repository_dispatch:
+    types: [uumit-new-task]
   workflow_dispatch:
     inputs:
       mode:
@@ -148,8 +152,22 @@ jobs:
       - name: 运行看门狗
         id: run
         run: |
-          MODE="${{ github.event.inputs.mode || 'once' }}"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            MODE="dispatch"
+          else
+            MODE="${{ github.event.inputs.mode || 'once' }}"
+          fi
           case "$MODE" in
+            dispatch)
+              echo '${{ toJSON(github.event.client_payload) }}' > /tmp/payload.json
+              MSG=$(python3 -c "import json;print(json.load(open('/tmp/payload.json')).get('message','') or '')")
+              if [ -z "$MSG" ]; then
+                echo "payload 里没有 message 字段，跳过"
+              else
+                python scripts/wakeup.py --message "$MSG" \
+                  || python scripts/notify.py "UUMit 有任务，但唤醒失败" "$MSG"
+              fi
+              ;;
             probe)
               python scripts/wakeup.py --probe || echo "probe 未找到可用入口"
               ;;
@@ -159,7 +177,6 @@ jobs:
             test-notify)
               python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
               ;;
-            loop)
               python scripts/watch.py --loop \
                 --max-seconds "${{ github.event.inputs.max_seconds || '19800' }}" \
                 --interval "${{ github.event.inputs.interval || '60' }}"
