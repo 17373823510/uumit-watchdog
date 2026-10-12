@@ -101,6 +101,38 @@ jobs:
           pip install --quiet playwright
           python -m playwright install --with-deps chromium || python -m playwright install chromium
 
+      - name: UUMit 连通性自检
+        run: |
+          python3 - <<'PY'
+          import os, socket, time, urllib.request
+          base = os.environ.get("UUMIT_BASE_URL", "https://api.uumit.com")
+          host = base.split("//")[1]
+          t = time.time()
+          try:
+              ip = socket.gethostbyname(host)
+              print(f"DNS  {host} -> {ip}   {time.time()-t:.2f}s")
+          except Exception as e:
+              print("DNS  FAIL:", e)
+          t = time.time()
+          try:
+              s = socket.create_connection((host, 443), timeout=20); s.close()
+              print(f"TCP  443 连通          {time.time()-t:.2f}s")
+          except Exception as e:
+              print("TCP  FAIL:", e)
+          t = time.time()
+          try:
+              req = urllib.request.Request(
+                  base + "/api/v1/tasks/applications/mine?page_size=1",
+                  headers={"X-Api-Key": os.environ["UUMIT_API_KEY"],
+                           "X-Platform-User-Id": os.environ["UUMIT_USER_ID"],
+                           "Accept": "application/json",
+                           "User-Agent": "uumit-watchdog/1.0"})
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  print(f"HTTP {r.status}            {time.time()-t:.2f}s  {len(r.read())}B")
+          except Exception as e:
+              print(f"HTTP FAIL {type(e).__name__}: {e}   {time.time()-t:.2f}s")
+          PY
+
       - name: 检查必需配置
         run: |
           python3 - <<'PY'
