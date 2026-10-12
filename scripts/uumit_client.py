@@ -22,7 +22,8 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_BASE = "https://api.uumit.com"
-DEFAULT_TIMEOUT = 25
+# GitHub Actions runner 在境外，访问国内接口延迟高，超时要给足
+DEFAULT_TIMEOUT = 45
 
 # ---------------------------------------------------------------- 状态分类
 # 申请状态没有官方枚举文档，实测只见过 "pending"。
@@ -68,7 +69,7 @@ class UumitClient:
             raise UumitError("缺少凭据：需设置 UUMIT_API_KEY 与 UUMIT_USER_ID")
 
     # ------------------------------------------------------------ 底层请求
-    def get(self, path, params=None, retries=3):
+    def get(self, path, params=None, retries=4):
         url = self.base + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
