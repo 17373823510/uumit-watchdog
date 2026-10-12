@@ -1,7 +1,8 @@
 __pycache__/
 *.py[cod]
 .env
-.env.*
+.env.local
+!.env.example
 shots/
 .DS_Store
 venv/
