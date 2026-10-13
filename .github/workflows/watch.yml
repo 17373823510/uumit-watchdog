@@ -15,7 +15,7 @@ on:
       mode:
         description: "probe=探测可用会话入口 / check=检查登录态 / test-notify=测试通知通道 / heartbeat=通知通道自检（GitHub Actions 无法直连 api.uumit.com，轮询请走沙箱/境内常驻服务）"
         required: false
-        default: "once"
+        default: "test-notify"
       max_seconds:
         description: "loop 模式最长运行时长（秒），GitHub job 上限 6 小时"
         required: false
