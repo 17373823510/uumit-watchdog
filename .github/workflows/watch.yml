@@ -2,9 +2,10 @@ name: UUMit Watchdog
 
 on:
   schedule:
-    # 每 15 分钟触发一次；job 内部会自检「是否已有实例在跑」，
-    # 有则本次立即退出，由在跑的那个实例长驻轮询，避免并发。
-    - cron: "*/15 * * * *"
+    # 每 30 分钟触发一次，仅做「通知通道自检 + WorkBuddy 入口探测」心跳。
+    # 因为 GitHub Actions runner 在境外，无法直接访问 api.uumit.com,
+    # 真正的 UUMit 轮询放在沙箱/境内常驻服务，由它们通过 repository_dispatch 推送信号。
+    - cron: "*/30 * * * *"
   # 供外部检测端（云函数 / 内网机器 / 沙箱）推送任务：
   #   POST /repos/{owner}/{repo}/dispatches  {"event_type":"uumit-new-task","client_payload":{"message":"AUTO ..."}}
   repository_dispatch:
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "once=检测一次 / loop=长驻轮询 / probe=探测可用会话入口 / check=检查登录态 / test-notify=测试通知通道"
+        description: "probe=探测可用会话入口 / check=检查登录态 / test-notify=测试通知通道 / heartbeat=通知通道自检（GitHub Actions 无法直连 api.uumit.com，轮询请走沙箱/境内常驻服务）"
         required: false
         default: "once"
       max_seconds:
@@ -154,8 +155,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             MODE="dispatch"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            MODE="heartbeat"
           else
-            MODE="${{ github.event.inputs.mode || 'once' }}"
+            MODE="${{ github.event.inputs.mode || 'test-notify' }}"
           fi
           case "$MODE" in
             dispatch)
@@ -174,21 +177,15 @@ jobs:
             check)
               python scripts/wakeup.py --check || echo "登录态检查未通过"
               ;;
+            heartbeat)
+              python scripts/notify.py "UUMit 看门狗心跳" "Actions 在线；若收到 repository_dispatch 会立刻唤醒 Agent。"
+              ;;
             test-notify)
               python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
               ;;
-            loop)
-              python scripts/watch.py --loop \
-                --max-seconds "${{ github.event.inputs.max_seconds || '19800' }}" \
-                --interval "${{ github.event.inputs.interval || '60' }}"
-              ;;
             *)
-              # schedule 触发时走长驻循环（job 上限内尽量跑满），手动 once 走单次
-              if [ "${{ github.event_name }}" = "schedule" ]; then
-                python scripts/watch.py --loop --max-seconds 19800 --interval "${POLL_INTERVAL}"
-              else
-                python scripts/watch.py --once
-              fi
+              echo "未知 mode: $MODE，改为 test-notify"
+              python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
               ;;
           esac
 
