@@ -234,7 +234,8 @@ def do_round(client, st, state_path, pending_path, dry=False):
     if now() - int(st.get("last_notify", 0)) > 3600:
         st["last_notify"] = now()
         notify.send("UUMit 有新任务，但浏览器唤醒失败",
-                    "手动发一句 “%s” 给 Agent 即可开工。\n\n%s" % (CODEWORD, msg))
+                    "手动发一句 “%s” 给 Agent 即可开工。\n\n%s" % (CODEWORD, msg),
+                    important=True)
     save_state(state_path, st)
     return result
 
@@ -282,7 +283,8 @@ def main():
 
         if consecutive_fail >= 5:
             log("连续 5 轮失败，退出（多半是凭据失效，请更新 Secrets）")
-            notify.send("UUMit 看门狗已停止", "连续 5 轮拉取失败，请检查 UUMIT_API_KEY / UUMIT_USER_ID 是否失效。")
+            notify.send("UUMit 看门狗已停止", "连续 5 轮拉取失败，请检查 UUMIT_API_KEY / UUMIT_USER_ID 是否失效。",
+                        important=True)
             return 2
 
         # 距离 job 上限不足一轮就收尾，避免被强杀丢状态

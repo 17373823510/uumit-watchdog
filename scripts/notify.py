@@ -45,18 +45,32 @@ def _post(url, data=None, headers=None, timeout=20):
         return False
 
 
-def send(title, content, channels=None):
-    """返回成功投递的通道名列表。"""
+def send(title, content, providers=None, important=False):
+    """返回成功投递的通道名列表。
+
+    providers : 显式指定通知提供方（pushplus/telegram/bark/serverchan/ntfy），
+                优先级最高；为 None 时全部启用。
+    important : 仅对 PushPlus 生效。True 时在默认通道基础上追加短信（PUSHPLUS_IMPORTANT_CHANNELS，
+                未单独配置则自动在 PUSHPLUS_CHANNELS 上补 sms）；False（默认）只走
+                PUSHPLUS_CHANNELS（默认 wechat,qq），不发短信。
+                设计目标：只有重要消息才走短信，普通消息只发微信 + QQ。
+    """
     ok = []
-    want = set((channels or "").split(",")) if channels else None
+    want = set((providers or "").split(",")) if providers else None
 
     # ---- PushPlus（微信 / QQ / 短信 / 邮件 / 企业微信，一个 token 多渠道）----
     pplus = os.environ.get("PUSHPLUS_TOKEN", "").strip()
     if pplus and (want is None or "pushplus" in want):
-        ch_raw = os.environ.get("PUSHPLUS_CHANNELS", "wechat").strip()
+        if important:
+            ch_raw = os.environ.get("PUSHPLUS_IMPORTANT_CHANNELS", "").strip()
+            if not ch_raw:
+                base = os.environ.get("PUSHPLUS_CHANNELS", "wechat,qq").strip()
+                ch_raw = base + (",sms" if "sms" not in base.split(",") else "")
+        else:
+            ch_raw = os.environ.get("PUSHPLUS_CHANNELS", "wechat,qq").strip()
         chans = [c.strip() for c in ch_raw.split(",") if c.strip()]
         for ch in chans:
-            # 短信有长度成本，砍短；微信/QQ 保留完整内容
+            # 短信有长度与资费成本，砍短；微信/QQ 保留完整内容
             body = content if ch != "sms" else content[:300]
             payload = {
                 "token": pplus,
@@ -106,6 +120,13 @@ def send(title, content, channels=None):
 
 
 if __name__ == "__main__":
-    import sys
-    send(sys.argv[1] if len(sys.argv) > 1 else "UUMit 测试",
-         sys.argv[2] if len(sys.argv) > 2 else "这是一条测试通知")
+    import argparse
+    ap = argparse.ArgumentParser(description="UUMit 备用通知通道")
+    ap.add_argument("title", nargs="?", default="UUMit 测试")
+    ap.add_argument("content", nargs="?", default="这是一条测试通知")
+    ap.add_argument("--providers", default=None,
+                    help="显式指定提供方，逗号分隔：pushplus,telegram,bark,serverchan,ntfy")
+    ap.add_argument("--important", action="store_true",
+                    help="重要消息：PushPlus 在默认通道基础上追加短信（sms）")
+    a = ap.parse_args()
+    send(a.title, a.content, providers=a.providers, important=a.important)

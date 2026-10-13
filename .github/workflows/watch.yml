@@ -46,8 +46,10 @@ jobs:
       WB_COOKIE:            ${{ secrets.WB_COOKIE }}
       WB_CHAT_URL:          ${{ vars.WB_CHAT_URL }}
       # ---- 兜底通知：PushPlus（微信 / QQ / 短信）----
+      # 普通消息默认只发微信 + QQ；重要消息（有新任务等）才追加短信
       PUSHPLUS_TOKEN:    ${{ secrets.PUSHPLUS_TOKEN }}
-      PUSHPLUS_CHANNELS: ${{ vars.PUSHPLUS_CHANNELS || 'wechat,qq,sms' }}
+      PUSHPLUS_CHANNELS: ${{ vars.PUSHPLUS_CHANNELS || 'wechat,qq' }}
+      PUSHPLUS_IMPORTANT_CHANNELS: ${{ vars.PUSHPLUS_IMPORTANT_CHANNELS || 'wechat,qq,sms' }}
       # ---- 其它兜底通知（可选）----
       TG_BOT_TOKEN:  ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID:    ${{ secrets.TG_CHAT_ID }}
@@ -168,7 +170,7 @@ jobs:
                 echo "payload 里没有 message 字段，跳过"
               else
                 python scripts/wakeup.py --message "$MSG" \
-                  || python scripts/notify.py "UUMit 有任务，但唤醒失败" "$MSG"
+                  || python scripts/notify.py --important "UUMit 有任务，但唤醒失败" "$MSG"
               fi
               ;;
             probe)
