@@ -2,10 +2,9 @@ name: UUMit Watchdog
 
 on:
   schedule:
-    # 每 30 分钟触发一次，仅做「通知通道自检 + WorkBuddy 入口探测」心跳。
-    # 因为 GitHub Actions runner 在境外，无法直接访问 api.uumit.com,
-    # 真正的 UUMit 轮询放在沙箱/境内常驻服务，由它们通过 repository_dispatch 推送信号。
-    - cron: "*/30 * * * *"
+    # 低频静默自检（每 3 小时一次），仅验证 Actions 自身与通知通道可用，
+    # 不发 PushPlus 骚扰用户。真正的新任务通知来自沙箱检测端。
+    - cron: "23 */3 * * *"
   # 供外部检测端（云函数 / 内网机器 / 沙箱）推送任务：
   #   POST /repos/{owner}/{repo}/dispatches  {"event_type":"uumit-new-task","client_payload":{"message":"AUTO ..."}}
   repository_dispatch:
@@ -101,7 +100,8 @@ jobs:
           restore-keys: |
             uumit-state-
 
-      - name: 安装 Playwright
+      - name: 安装 Playwright（仅浏览器唤醒模式需要）
+        if: github.event_name == 'repository_dispatch' || github.event.inputs.mode == 'probe' || github.event.inputs.mode == 'check'
         run: |
           pip install --quiet playwright
           python -m playwright install --with-deps chromium || python -m playwright install chromium
@@ -178,7 +178,8 @@ jobs:
               python scripts/wakeup.py --check || echo "登录态检查未通过"
               ;;
             heartbeat)
-              python scripts/notify.py "UUMit 看门狗心跳" "Actions 在线；若收到 repository_dispatch 会立刻唤醒 Agent。"
+              # 静默自检，不发 PushPlus 骚扰用户
+              echo "Actions 心跳：在线，等待沙箱 repository_dispatch 信号（新任务由沙箱检测端通知）。"
               ;;
             test-notify)
               python scripts/notify.py "UUMit 看门狗测试" "收到这条说明通知通道正常。"
