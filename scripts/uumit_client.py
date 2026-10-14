@@ -113,20 +113,85 @@ class UumitClient:
 
     # ------------------------------------------------------------ 业务封装
     def my_applications(self, page_size=100):
-        """我的接单申请列表。"""
-        data = self.get("/api/v1/tasks/applications/mine",
-                        {"page": 1, "page_size": page_size})
-        d = data.get("data") or {}
-        items = d.get("items") if isinstance(d, dict) else (d or [])
-        return items or []
+        """我的接单申请列表（全量）。
+
+        平台 /tasks/applications/mine 的排序在「带分页参数」与「不带分页参数」
+        时不一致：带 page/page_size 时分页视图会漏掉最新申请（例如最新的
+        「待接受」申请只出现在默认无分页视图里）。历史上仅取 page=1 导致
+        监听遗漏。这里改为：先取默认（无分页）视图，再翻页补全并去重。
+        """
+        merged, seen = [], set()
+
+        def _add(items):
+            for a in items or []:
+                aid = a.get("id") or a.get("application_id")
+                if not aid or aid in seen:
+                    continue
+                seen.add(aid)
+                merged.append(a)
+
+        # 1) 默认视图（无分页参数）——最新申请优先在此出现
+        try:
+            data = self.get("/api/v1/tasks/applications/mine")
+            d = data.get("data") or {}
+            _add(d.get("items") if isinstance(d, dict) else (d or []))
+        except Exception:                                # noqa: BLE001
+            pass
+
+        # 2) 翻页补全（按 has_more / total 判断停止）
+        page = 1
+        while page <= 20:
+            data = self.get("/api/v1/tasks/applications/mine",
+                            {"page": page, "page_size": page_size})
+            d = data.get("data") or {}
+            if isinstance(d, dict):
+                items = d.get("items") or []
+                total = d.get("total")
+                has_more = d.get("has_more")
+            else:
+                items = d or []
+                total, has_more = None, None
+            _add(items)
+            if not items:
+                break
+            if has_more is False:
+                break
+            if isinstance(total, int) and len(seen) >= total:
+                break
+            if len(items) < page_size:
+                break
+            page += 1
+        return merged
 
     def seller_orders(self, page_size=100):
-        """作为接单方（卖家）的订单列表。"""
-        data = self.get("/api/v1/orders", {"role": "seller", "page": 1,
-                                           "page_size": page_size})
-        d = data.get("data") or {}
-        items = d.get("items") if isinstance(d, dict) else (d or [])
-        return items or []
+        """作为接单方（卖家）的订单列表（全量，翻页补全）。"""
+        merged, seen = [], set()
+        page = 1
+        while page <= 20:
+            data = self.get("/api/v1/orders", {"role": "seller", "page": page,
+                                               "page_size": page_size})
+            d = data.get("data") or {}
+            if isinstance(d, dict):
+                items = d.get("items") or []
+                total = d.get("total")
+                has_more = d.get("has_more")
+            else:
+                items = d or []
+                total, has_more = None, None
+            for o in items:
+                oid = o.get("id") or o.get("order_id")
+                if not oid or oid in seen:
+                    continue
+                seen.add(oid)
+                merged.append(o)
+            if not items or has_more is False:
+                break
+            if isinstance(total, int) and len(seen) >= total:
+                break
+            if len(items) < page_size:
+                break
+            page += 1
+        return merged
 
     def task_detail(self, task_id):
         """任务详情（拿标题/预算/交付要求），失败时返回 None，不阻断主流程。"""
