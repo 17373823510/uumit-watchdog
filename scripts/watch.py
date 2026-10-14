@@ -90,8 +90,20 @@ def write_pending(path, events):
     log("已写入待办：%s（%d 项）" % (path, len(events)))
 
 
+def clear_pending(path):
+    """无事件时清空待办文件，避免旧事件长期残留被误当新任务。"""
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"updated_at": ts(), "count": 0, "items": []},
+                      f, ensure_ascii=False, indent=2)
+    except Exception as e:                               # noqa: BLE001
+        log("清空待办失败：%s" % e)
+
+
 # ---------------------------------------------------------------- 差异计算
-def diff(st, apps, orders):
+def diff(st, apps, orders, grace=False):
     """
     返回 (events, first_run)
     event = {kind, id, title, raw_status, status, prev_status, task_id, ...}
@@ -99,9 +111,13 @@ def diff(st, apps, orders):
       - 申请：状态从 waiting 变成 accepted / unknown（unknown 视为「有变化，交给 Agent 判断」）
       - 申请：首次见到且状态已是 accepted（历史遗留也补报一次）
       - 订单：出现任何新 order_id
+      - 订单：已有订单状态发生变化（如 pending_delivery → completed / canceled）
+
+    grace=True 表示本次为「重建基线」轮：只建立状态快照，不产生任何事件，
+    防止状态文件丢失/损坏后重启时把历史 accepted 申请一次性全部补报（轰炸）。
     """
     events = []
-    first_run = not st["applications"] and not st["orders"]
+    first_run = grace or (not st["applications"] and not st["orders"])
 
     seen_apps = {}
     for a in apps:
@@ -112,7 +128,7 @@ def diff(st, apps, orders):
         prev = st["applications"].get(b["app_id"])
         cur = b["status"]
         if first_run:
-            # 首次运行不补报历史，避免开箱即轰炸
+            # 首次/重建基线不补报历史，避免开箱即轰炸
             continue
         if prev is None:
             # 新出现的申请：只在已是「通过类」时报，pending 不报
@@ -139,6 +155,11 @@ def diff(st, apps, orders):
             b["prev_status"] = None
             b["event"] = "new_order"
             events.append(b)
+        elif st["orders"].get(b["order_id"]) != (b["raw_status"] or ""):
+            # 已有订单状态变化（如 pending_delivery → completed/canceled）
+            b["prev_status"] = st["orders"].get(b["order_id"])
+            b["event"] = "order_status_changed"
+            events.append(b)
 
     st["applications"] = seen_apps
     st["orders"] = seen_orders
@@ -163,6 +184,11 @@ def build_message(events):
                          % (i, "通过" if e["status"] == "accepted" else "状态变化",
                             e["title"][:40], e["app_id"][:8], e["task_id"][:8],
                             e.get("prev_status") or "-", e["raw_status"]))
+        elif e.get("event") == "order_status_changed":
+            lines.append("%d) [订单变化] %s | order=%s task=%s | %s→%s"
+                         % (i, e["title"][:40], str(e["order_id"])[:8],
+                            str(e.get("task_id"))[:8],
+                            e.get("prev_status") or "-", e["raw_status"]))
         else:
             lines.append("%d) [新订单] %s | order=%s task=%s | %s"
                          % (i, e["title"][:40], str(e["order_id"])[:8],
@@ -185,13 +211,26 @@ def do_round(client, st, state_path, pending_path, dry=False):
         log("❌ 拉取失败：%s" % e)
         return {"ok": False, "error": str(e)}
 
-    events, first_run = diff(st, apps, orders)
+    # 重建基线判定：以下任一情况视为「重建」，本轮只建快照、不产事件，
+    # 避免把历史 accepted 申请一次性全部补报造成轰炸：
+    #   a) 状态文件为空（首次运行或文件损坏被重建）；
+    #   b) 已记录申请数远少于实时拉取数（历史 bug 只存了前 100 条、或文件被截断），
+    #      说明状态快照不完整，不能据此判断「新增/变化」。
+    known_apps = len(st.get("applications") or {})
+    known_orders = len(st.get("orders") or {})
+    grace = (known_apps == 0 and known_orders == 0) or \
+            (len(apps) > 0 and known_apps < len(apps) * 0.9)
+    if grace and known_apps:
+        log("检测到状态快照不完整（已知 %d / 实时 %d），本轮重建基线不报事件"
+            % (known_apps, len(apps)))
+    events, first_run = diff(st, apps, orders, grace=grace)
     log("申请 %d / 订单 %d / 新事件 %d%s"
         % (len(apps), len(orders), len(events), "（首次运行，仅建基线）" if first_run else ""))
 
     result = {"ok": True, "events": events, "first_run": first_run, "wake": None}
 
     if not events:
+        clear_pending(pending_path)
         save_state(state_path, st)
         return result
 
