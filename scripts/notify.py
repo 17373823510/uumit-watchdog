@@ -23,12 +23,6 @@ import urllib.request
 
 PUSHPLUS_API = "http://www.pushplus.plus/send"
 
-import json
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
-
 
 def _post(url, data=None, headers=None, timeout=20):
     body = None
