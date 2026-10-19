@@ -1,9 +1,13 @@
 name: Heartbeat
 
-# 两个作用：
-# 1) 保持仓库活跃 —— GitHub 会禁用「长时间无活动仓库」的定时任务，
-#    每天一次空提交可以避免 watch.yml 的 schedule 被停掉。
-# 2) 每天自检一次 UUMit 凭据是否还有效，失效立刻发通知提醒更新 Secrets。
+# 作用：保持仓库活跃 —— GitHub 会禁用「长时间无活动仓库」的定时任务，
+# 每天一次空提交可以避免 watch.yml 的 schedule 被停掉。
+#
+# 注意：这里不再轮询 UUMit，也不做「凭据自检」。
+# 原因：GitHub Actions（海外机房）无法直连 api.uumit.com（TCP 超时），
+#       之前的自检每天必然失败并误报「凭据失效」。
+# 真正的轮询 + 通知已由 阿里云 FC 云函数（uumit-watchdog，每 15 分钟）承担，
+# 本工作流仅作为仓库保活与 Actions 通道自检，静默运行，不打扰。
 on:
   schedule:
     - cron: "17 2 * * *"
@@ -15,44 +19,13 @@ permissions:
 jobs:
   beat:
     runs-on: ubuntu-latest
-    env:
-      UUMIT_API_KEY: ${{ secrets.UUMIT_API_KEY }}
-      UUMIT_USER_ID: ${{ secrets.UUMIT_USER_ID }}
-      PUSHPLUS_TOKEN:    ${{ secrets.PUSHPLUS_TOKEN }}
-      PUSHPLUS_CHANNELS: ${{ vars.PUSHPLUS_CHANNELS || 'wechat,qq' }}
-      PUSHPLUS_IMPORTANT_CHANNELS: ${{ vars.PUSHPLUS_IMPORTANT_CHANNELS || 'wechat,qq,sms' }}
-      TG_BOT_TOKEN:   ${{ secrets.TG_BOT_TOKEN }}
-      TG_CHAT_ID:     ${{ secrets.TG_CHAT_ID }}
-      BARK_KEY:       ${{ secrets.BARK_KEY }}
-      SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-      NTFY_TOPIC:     ${{ secrets.NTFY_TOPIC }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: 凭据健康自检
+      - name: 心跳（静默保活）
         run: |
-          python3 - <<'PY'
-          import os, sys
-          sys.path.insert(0, "scripts")
-          from uumit_client import UumitClient, UumitError
-          import notify
-          try:
-              c = UumitClient()
-              apps = c.my_applications(page_size=5)
-              print("凭据有效，申请样例数:", len(apps))
-          except UumitError as e:
-              print("::error::凭据自检失败")
-              notify.send("UUMit 看门狗凭据失效",
-                          "GitHub Actions 拉不到 UUMit 数据，请去仓库 Secrets 更新 "
-                          "UUMIT_API_KEY / UUMIT_USER_ID。\n\n详情：%s" % e,
-                          important=True)
-              raise SystemExit(1)
-          PY
+          echo "Heartbeat OK：仓库保活中。"
+          echo "UUMit 轮询由阿里云 FC 负责；本工作流不再轮询 UUMit，不再发凭据告警。"
 
       - name: 空提交保活
         run: |
